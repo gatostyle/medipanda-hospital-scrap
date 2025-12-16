@@ -1,0 +1,82 @@
+name: Scrape Hospitals
+
+on:
+  schedule:
+    # 매일 새벽 3시 (KST) = UTC 18:00
+    - cron: '0 18 * * *'
+  workflow_dispatch:  # 수동 실행
+    inputs:
+      environment:
+        description: '환경 선택'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  scrape-dev:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install dependencies
+        run: pip install selenium pandas psycopg2-binary openpyxl boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-2
+
+      - name: Run scraper (DEV)
+        env:
+          DB_NAME: qa2
+          PARAM_STORE_KEY: postgres-dev-password
+        run: python scripts/scrape_hospitals.py
+
+  scrape-prod:
+    runs-on: ubuntu-latest
+    needs: scrape-dev  # dev 완료 후 실행
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install dependencies
+        run: pip install selenium pandas psycopg2-binary openpyxl boto3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-2
+
+      - name: Run scraper (PROD)
+        env:
+          DB_NAME: medipanda
+          PARAM_STORE_KEY: postgres-prod-password
+        run: python scripts/scrape_hospitals.py
