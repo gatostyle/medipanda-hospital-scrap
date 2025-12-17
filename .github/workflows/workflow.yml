@@ -44,8 +44,7 @@ jobs:
 
       - name: Run scraper (DEV)
         env:
-          DB_NAME: qa2
-          PARAM_STORE_KEY: postgres-dev-password
+          API_URL: https://dev.api.medipanda.co.kr
         run: python scrape_hospitals.py
 
   scrape-prod:
@@ -77,6 +76,5 @@ jobs:
 
       - name: Run scraper (PROD)
         env:
-          DB_NAME: medipanda
-          PARAM_STORE_KEY: postgres-prod-password
+          API_URL: https://prod.api.medipanda.co.kr
         run: python scrape_hospitals.py
