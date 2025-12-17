@@ -46,7 +46,7 @@ jobs:
         env:
           DB_NAME: qa2
           PARAM_STORE_KEY: postgres-dev-password
-        run: python scripts/scrape_hospitals.py
+        run: python scrape_hospitals.py
 
   scrape-prod:
     runs-on: ubuntu-latest
@@ -79,4 +79,4 @@ jobs:
         env:
           DB_NAME: medipanda
           PARAM_STORE_KEY: postgres-prod-password
-        run: python scripts/scrape_hospitals.py
+        run: python scrape_hospitals.py
