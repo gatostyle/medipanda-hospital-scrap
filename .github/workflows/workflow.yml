@@ -2,23 +2,12 @@ name: Scrape Hospitals
 
 on:
   schedule:
-    # 매일 새벽 3시 (KST) = UTC 18:00
-    - cron: '0 18 * * *'
-  workflow_dispatch:  # 수동 실행
-    inputs:
-      environment:
-        description: '환경 선택'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - prod
+    - cron: '0 18 * * *'  # 매일 새벽 3시 KST
+  workflow_dispatch:
 
 jobs:
-  scrape-dev:
+  scrape:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -33,24 +22,45 @@ jobs:
           chrome-version: stable
 
       - name: Install dependencies
-        run: pip install selenium pandas psycopg2-binary openpyxl boto3
+        run: pip install selenium pandas openpyxl requests
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Run scraper
+        run: python scrape_hospitals.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-northeast-2
+          name: hospital-data
+          path: hospital_data.json
+          retention-days: 1
 
-      - name: Run scraper (DEV)
+  deploy-dev:
+    needs: scrape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hospital-data
+
+      - name: Send to DEV API
         env:
           API_URL: https://dev.api.medipanda.co.kr
-        run: python scrape_hospitals.py
+        run: python send_to_api.py
 
-  scrape-prod:
+  deploy-prod:
+    needs: deploy-dev
     runs-on: ubuntu-latest
-    needs: scrape-dev  # dev 완료 후 실행
-
     steps:
       - uses: actions/checkout@v4
 
@@ -59,22 +69,15 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-
       - name: Install dependencies
-        run: pip install selenium pandas psycopg2-binary openpyxl boto3
+        run: pip install requests
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Download artifact
+        uses: actions/download-artifact@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-northeast-2
+          name: hospital-data
 
-      - name: Run scraper (PROD)
+      - name: Send to PROD API
         env:
           API_URL: https://prod.api.medipanda.co.kr
-        run: python scrape_hospitals.py
+        run: python send_to_api.py

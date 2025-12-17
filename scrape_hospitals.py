@@ -2,7 +2,7 @@ import os
 import time
 import glob
 import re
-import requests
+import json
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -11,13 +11,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from datetime import datetime
 
-# ============ 설정 (환경변수에서) ============
 DOWNLOAD_DIR = os.path.join(os.getcwd(), "hospital_downloads")
-API_URL = os.environ.get("API_URL", "https://api-dev.medipanda.co.kr")
+OUTPUT_FILE = "hospital_data.json"
 
-print(f"🔧 Environment: API_URL={API_URL}")
-
-# 시도 코드
 SIDO_MAP = {
     "서울특별시": "6110000",
     "부산광역시": "6260000",
@@ -45,7 +41,6 @@ CATEGORY_MAP = {
 
 
 def normalize_sido(sido: str) -> str:
-    """시도명 정규화"""
     if not sido:
         return ''
     sido = sido.strip()
@@ -75,67 +70,40 @@ def normalize_sido(sido: str) -> str:
 
 
 def normalize_sigungu(sido: str, sigungu: str) -> str:
-    """시군구 정규화 (복합 시군구 분리)"""
     if not sigungu:
         return ''
     sigungu = sigungu.strip()
 
     compound_map = {
-        '성남시분당구': '성남시',
-        '성남시수정구': '성남시',
-        '성남시중원구': '성남시',
-        '고양시일산서구': '고양시',
-        '고양시일산동구': '고양시',
-        '고양시덕양구': '고양시',
-        '수원시권선구': '수원시',
-        '수원시팔달구': '수원시',
-        '수원시영통구': '수원시',
-        '수원시장안구': '수원시',
-        '안산시상록구': '안산시',
-        '안산시단원구': '안산시',
-        '안양시만안구': '안양시',
-        '안양시동안구': '안양시',
-        '용인시수지구': '용인시',
-        '용인시기흥구': '용인시',
-        '용인시처인구': '용인시',
-        '천안시서북구': '천안시',
-        '천안시동남구': '천안시',
-        '청주시상당구': '청주시',
-        '청주시서원구': '청주시',
-        '청주시흥덕구': '청주시',
-        '청주시청원구': '청주시',
-        '전주시완산구': '전주시',
-        '전주시덕진구': '전주시',
-        '포항시북구': '포항시',
-        '포항시남구': '포항시',
-        '창원시의창구': '창원시',
-        '창원시성산구': '창원시',
-        '창원시마산합포구': '창원시',
-        '창원시마산회원구': '창원시',
-        '창원시진해구': '창원시',
+        '성남시분당구': '성남시', '성남시수정구': '성남시', '성남시중원구': '성남시',
+        '고양시일산서구': '고양시', '고양시일산동구': '고양시', '고양시덕양구': '고양시',
+        '수원시권선구': '수원시', '수원시팔달구': '수원시', '수원시영통구': '수원시', '수원시장안구': '수원시',
+        '안산시상록구': '안산시', '안산시단원구': '안산시',
+        '안양시만안구': '안양시', '안양시동안구': '안양시',
+        '용인시수지구': '용인시', '용인시기흥구': '용인시', '용인시처인구': '용인시',
+        '천안시서북구': '천안시', '천안시동남구': '천안시',
+        '청주시상당구': '청주시', '청주시서원구': '청주시', '청주시흥덕구': '청주시', '청주시청원구': '청주시',
+        '전주시완산구': '전주시', '전주시덕진구': '전주시',
+        '포항시북구': '포항시', '포항시남구': '포항시',
+        '창원시의창구': '창원시', '창원시성산구': '창원시', '창원시마산합포구': '창원시',
+        '창원시마산회원구': '창원시', '창원시진해구': '창원시',
         '당진군': '당진시',
     }
 
     if sigungu in compound_map:
         return compound_map[sigungu]
-
     if sigungu.startswith('울주군'):
         return '울주군'
-
     if sido == '대구광역시' and sigungu.startswith('동구'):
         return '동구'
-
     if sigungu.startswith('예천군'):
         return '예천군'
-
     if sigungu.startswith('나주시'):
         return '나주시'
-
     return sigungu
 
 
 def extract_dong_from_road_address(road_address: str) -> str:
-    """도로명주소 괄호 안에서 동/읍/면 추출"""
     if not road_address:
         return ''
     match = re.search(r'\(([^,\)]+(?:동|읍|면))[,\)]', road_address)
@@ -145,7 +113,6 @@ def extract_dong_from_road_address(road_address: str) -> str:
 
 
 def parse_address(row):
-    """주소 파싱 - 도로명주소 우선, 세종시 특별 처리"""
     road_address = str(row.get('도로명전체주소', '') or '').strip()
     address = str(row.get('소재지전체주소', '') or '').strip()
 
@@ -155,7 +122,6 @@ def parse_address(row):
         address = ''
 
     target_address = road_address if road_address else address
-
     if not target_address:
         return '', ''
 
@@ -166,50 +132,36 @@ def parse_address(row):
     sido_raw = parts[0]
     sido = normalize_sido(sido_raw)
 
-    # 세종시
     if sido == '세종특별자치시':
         if len(parts) >= 2:
             second = parts[1]
             if second.endswith(('동', '읍', '면')):
                 return sido, second
-
         dong = extract_dong_from_road_address(road_address)
         if dong:
             return sido, dong
-
         if address:
             addr_parts = address.split()
             if len(addr_parts) >= 2:
                 second = addr_parts[1]
                 if second.endswith(('동', '읍', '면')):
                     return sido, second
-
         return sido, ''
 
     if sido_raw.endswith(('동', '읍', '면', '리')):
         return '', ''
-
     if sido_raw == '군위군':
         return '경상북도', '군위군'
-
     if sido_raw in ['포항시', '창원시', '거제시', '진주시', '구미시', '안동시', '영주시', '제천시']:
         sido_map = {
-            '포항시': '경상북도',
-            '창원시': '경상남도',
-            '거제시': '경상남도',
-            '진주시': '경상남도',
-            '구미시': '경상북도',
-            '안동시': '경상북도',
-            '영주시': '경상북도',
-            '제천시': '충청북도',
+            '포항시': '경상북도', '창원시': '경상남도', '거제시': '경상남도', '진주시': '경상남도',
+            '구미시': '경상북도', '안동시': '경상북도', '영주시': '경상북도', '제천시': '충청북도',
         }
         return sido_map.get(sido_raw, ''), sido_raw
-
     if sido_raw in ['성남시', '수원시', '안산시', '안양시', '용인시', '고양시']:
         return '경기도', sido_raw
 
     sigungu = parts[1]
-
     if not sigungu.endswith(('시', '군', '구')):
         if address:
             addr_parts = address.split()
@@ -222,10 +174,8 @@ def parse_address(row):
 
     if sido == '전라남도' and sigungu == '벌교상고길':
         sigungu = '보성군'
-
     if sido == '울산광역시' and sigungu == '새즈믄해거리':
         sigungu = '울주군'
-
     if sido == '대구광역시' and sigungu == '군위군':
         sido = '경상북도'
 
@@ -234,32 +184,27 @@ def parse_address(row):
 
 def setup_driver():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-
     prefs = {
         "download.default_directory": DOWNLOAD_DIR,
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
     }
     options.add_experimental_option("prefs", prefs)
-
     return webdriver.Chrome(options=options)
 
 
 def wait_for_download(before_files, timeout=180):
-    """다운로드 완료 대기 (최대 3분)"""
     start_time = time.time()
     while time.time() - start_time < timeout:
         current_files = set(glob.glob(os.path.join(DOWNLOAD_DIR, "*.xlsx")))
         new_files = current_files - before_files
         crdownload = glob.glob(os.path.join(DOWNLOAD_DIR, "*.crdownload"))
-
         if new_files and not crdownload:
             time.sleep(2)
             return list(new_files)[0]
@@ -268,34 +213,24 @@ def wait_for_download(before_files, timeout=180):
 
 
 def scrape_category(driver, category_name: str, opn_svc_id: str):
-    """특정 업종의 모든 시도 데이터 다운로드"""
     downloaded_files = []
-
     for sido_name, sido_code in SIDO_MAP.items():
         try:
             print(f"\n🔄 수집 중: {category_name} - {sido_name}")
-
             url = f"https://www.localdata.go.kr/data/dataView.do?opnSvcId={opn_svc_id}"
             driver.get(url)
             time.sleep(3)
 
             wait = WebDriverWait(driver, 20)
-
-            sido_select = Select(wait.until(
-                EC.presence_of_element_located((By.ID, "sidoCodeLabel"))
-            ))
+            sido_select = Select(wait.until(EC.presence_of_element_located((By.ID, "sidoCodeLabel"))))
             sido_select.select_by_value(sido_code)
             time.sleep(2)
 
-            status_select = Select(wait.until(
-                EC.presence_of_element_located((By.ID, "srhStatus"))
-            ))
+            status_select = Select(wait.until(EC.presence_of_element_located((By.ID, "srhStatus"))))
             status_select.select_by_value("01")
             time.sleep(1)
 
-            search_btn = wait.until(
-                EC.element_to_be_clickable((By.ID, "searchBtn"))
-            )
+            search_btn = wait.until(EC.element_to_be_clickable((By.ID, "searchBtn")))
             search_btn.click()
             time.sleep(5)
 
@@ -306,16 +241,12 @@ def scrape_category(driver, category_name: str, opn_svc_id: str):
             if total_count == 0:
                 print(f"   ⏭️ 스킵")
                 continue
-
             if total_count >= 100000:
                 print(f"   ⚠️ 10만건 이상, 별도 처리 필요")
                 continue
 
             before_files = set(glob.glob(os.path.join(DOWNLOAD_DIR, "*.xlsx")))
-
-            excel_btn = wait.until(
-                EC.element_to_be_clickable((By.ID, "downBtn_xlsx"))
-            )
+            excel_btn = wait.until(EC.element_to_be_clickable((By.ID, "downBtn_xlsx")))
             excel_btn.click()
 
             downloaded_file = wait_for_download(before_files)
@@ -329,18 +260,14 @@ def scrape_category(driver, category_name: str, opn_svc_id: str):
                 print(f"   ✅ 완료")
             else:
                 print(f"   ❌ 실패 (타임아웃)")
-
             time.sleep(2)
-
         except Exception as e:
             print(f"   ❌ 에러: {e}")
             continue
-
     return downloaded_files
 
 
 def parse_excel_files():
-    """다운로드된 엑셀 파일 파싱"""
     all_data = []
     files = glob.glob(os.path.join(DOWNLOAD_DIR, "*.xlsx"))
 
@@ -404,63 +331,24 @@ def parse_excel_files():
 
                 if record['managementNumber'] and record['name']:
                     all_data.append(record)
-
         except Exception as e:
             print(f"❌ 파싱 에러: {file_path}: {e}")
 
-    # 중복 제거 (관리번호 기준)
     unique_data = {d['managementNumber']: d for d in all_data}
     print(f"\n📊 총 {len(unique_data):,}건 (중복 제거 후)")
-
     return list(unique_data.values())
-
-
-def insert_via_api(data: list):
-    """API를 통해 데이터 삽입"""
-    if not data:
-        print("삽입할 데이터 없음")
-        return
-
-    batch_size = 1000
-    total_batches = (len(data) + batch_size - 1) // batch_size
-
-    print(f"📤 API로 전송 중... (총 {len(data):,}건, {total_batches}배치)")
-
-    for i in range(0, len(data), batch_size):
-        batch = data[i:i + batch_size]
-        batch_num = i // batch_size + 1
-
-        try:
-            response = requests.post(
-                f"{API_URL}/api/v1/hospitals/bulk-upsert",
-                json=batch,
-                headers={"Content-Type": "application/json"},
-                timeout=120
-            )
-            response.raise_for_status()
-
-            result = response.json()
-            print(f"   배치 {batch_num}/{total_batches}: {result.get('inserted', len(batch))}건")
-
-        except requests.exceptions.RequestException as e:
-            print(f"   ❌ 배치 {batch_num} 실패: {e}")
-            raise
-
-    print(f"✅ API 전송 완료")
 
 
 def main():
     print("=" * 60)
-    print(f"🏥 병원/의원 스크래핑 (API: {API_URL})")
+    print("🏥 병원/의원 스크래핑")
     print("=" * 60)
 
-    # 기존 다운로드 파일 정리
     if os.path.exists(DOWNLOAD_DIR):
         for f in glob.glob(os.path.join(DOWNLOAD_DIR, "*.xlsx")):
             os.remove(f)
         print(f"📁 다운로드 폴더 정리: {DOWNLOAD_DIR}")
 
-    # 스크래핑
     driver = setup_driver()
     all_downloaded = []
 
@@ -476,20 +364,18 @@ def main():
 
     print(f"\n📥 다운로드 완료: {len(all_downloaded)}개 파일")
 
-    # 엑셀 파싱
     print("\n" + "=" * 60)
     print("📄 엑셀 파싱 중...")
     print("=" * 60)
     all_data = parse_excel_files()
 
-    # API로 전송
-    print("\n" + "=" * 60)
-    print("💾 API로 데이터 전송 중...")
-    print("=" * 60)
-    insert_via_api(all_data)
+    # JSON 파일로 저장
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+        json.dump(all_data, f, ensure_ascii=False)
+    print(f"\n💾 {OUTPUT_FILE} 저장 완료 ({len(all_data):,}건)")
 
     print("\n" + "=" * 60)
-    print("✅ 완료!")
+    print("✅ 스크래핑 완료!")
     print("=" * 60)
 
 
